@@ -18,3 +18,11 @@ Features:
 
 Example Output:
 ![image](https://github.com/user-attachments/assets/f4467841-2e21-4ba0-a660-913a72c1fd2b)
+
+Known Issues:
+1. Langchain/Langgraph inheritance errors/warnings
+Solution: Ask on the langchain forums. Notorious for never being up to date and breaking with every update.
+
+2. Streamlit doesn't return the output after one click
+Solution: Varies from system to system. Keep trying!
+
