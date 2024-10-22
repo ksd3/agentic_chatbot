@@ -17,6 +17,7 @@ from langchain_core.messages import HumanMessage
 from pydantic import BaseModel
 from langgraph.graph import StateGraph, END
 from streamlit_chromadb_connection.chromadb_connection import ChromadbConnection
+from typing import Optional
 
 # Load environment variables
 load_dotenv()
@@ -41,7 +42,6 @@ if uploaded_file is not None:
         text = ""
         with pdfplumber.open(pdf_path) as pdf:
             for page_num, page in enumerate(pdf.pages):
-                st.write(f"Processing page {page_num + 1}/{len(pdf.pages)}")
                 page_text = page.extract_text()
                 if page_text:
                     text += page_text
@@ -67,29 +67,19 @@ if uploaded_file is not None:
     client = PersistentClient(path="./chroma_vectordb")
     vectordb = Chroma(client=client).from_documents(docs, embeddings)
 
-    # Display success message
-    st.success("PDF processed and document stored successfully!")
-
     # Define the state schema for LangChain
     class StateSchema(BaseModel):
         question: str
         documents: list
         web_search_needed: str = "No"
+        generation: Optional[str] = None  # Add generation to the state schema
 
     # Define the chatbot logic (retrieve, grade, generate answer)
     def retrieve(state: StateSchema):
-        print("---RETRIEVE DOCUMENTS---")
         query = state.question  # Access the question from the state
 
         # Retrieve top 5 chunks
         retrieved_docs = vectordb.similarity_search(query, k=5)
-
-        # Debugging: Print retrieved documents
-        if retrieved_docs:
-            print(f"Retrieved Documents: {[doc.page_content[:200] for doc in retrieved_docs]}")
-        else:
-            print("No documents retrieved.")
-
         return {"documents": retrieved_docs, "question": query}  # Always update documents and question
 
     def grade_documents(state: StateSchema):
@@ -109,25 +99,21 @@ if uploaded_file is not None:
         for doc in docs:
             try:
                 result = model.invoke(prompt.format(context=doc.page_content, question=question))
-                print(f"Model response for document: {result.content}")  # Debugging step
 
                 # If the model explicitly says 'no', exclude the document; otherwise, include it
                 if 'no' not in result.content.lower():
                     graded_docs.append(doc)
             except Exception as e:
-                print(f"Error grading document: {e}")
+                pass  # Silently ignore errors for now
         
         # If no relevant documents are found, signal that a web search is needed
         return {"documents": graded_docs, "web_search_needed": "No" if graded_docs else "Yes"}
 
-
     def generate_answer(state: StateSchema):
-        print("---GENERATE ANSWER---")
         question = state.question  # Access the question from the state
         docs = state.documents  # Access the documents from the state
         
         if not docs:
-            print("No documents to generate an answer from.")
             return {"generation": "No relevant documents found to answer the question.", "documents": docs, "question": question}
 
         # Prepare the document content for passing into the model
@@ -138,22 +124,12 @@ if uploaded_file is not None:
         llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
         rag_chain = prompt | llm | StrOutputParser()
 
-        # Debugging: Print the context and question before invoking the chain
-        print(f"Context for LLM:\n{context[:500]}")  # Print first 500 characters of the context for debugging
-        print(f"Question for LLM:\n{question}")
-
         try:
             # Call invoke method properly, ensuring correct input format
             generation = rag_chain.invoke({"context": context, "question": question})
-
-            # Print the raw output from the LLM
-            print("Raw LLM Output:", generation)
-
-            # Return the raw generation directly without further processing
             return {"generation": generation, "documents": docs, "question": question}
             
         except Exception as e:
-            print(f"Error during LLM invocation: {e}")
             return {"generation": None, "documents": docs, "question": question}
 
     # Define the chatbot logic flow using StateGraph
@@ -174,15 +150,11 @@ if uploaded_file is not None:
             # Initial state setup with user query
             initial_state = {"question": user_query, "documents": [], "web_search_needed": "No"}
             
-            # Debugging: Print initial state before invoking the graph
-            st.write("Initial State:", initial_state)
-            
             # Invoke the agentic graph with the initial state
             response = agentic_rag.invoke(initial_state)
             
-            # Debugging: Print raw LLM response
-            if 'generation' in response:
-                st.write("Raw LLM Output:", response['generation'])
+            # Display the generated answer if available
+            if 'generation' in response and response['generation']:
+                st.write(response['generation'])
             else:
                 st.write("No relevant answer generated or no documents retrieved.")
-
