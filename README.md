@@ -13,6 +13,8 @@ Features:
 2. Persistent chat capabilities, with the ability to remember previous chats
 3. Customizable censorship to ban keywords that relate to inappropriate content
 4. UI prototype in Streamlit
+5. Ability to read PDFs with images with OCR
+6. Builds semantic understanding/memory of PDF
 
 Example Output:
 ![image](https://github.com/user-attachments/assets/f4467841-2e21-4ba0-a660-913a72c1fd2b)
