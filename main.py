@@ -95,17 +95,31 @@ if uploaded_file is not None:
     def grade_documents(state: StateSchema):
         docs = state.documents
         question = state.question
-        model = ChatOpenAI(temperature=0, model="gpt-4")
-        prompt = """You are a grader assessing relevance of a document to a user question. \n 
-                    Here is the retrieved document: \n\n {context} \n\n
+        model = ChatOpenAI(temperature=0.8, model="gpt-4")  # Slightly higher temperature to allow flexibility
+
+        # Adjusted prompt for leniency
+        prompt = """You are assessing whether the following document is relevant to a user question. \n 
+                    Here is the document: \n\n {context} \n\n
                     Here is the user question: {question} \n
-                    Provide a binary 'yes' or 'no' to indicate whether the document is relevant."""
+                    Reply 'yes' if there is any chance this document could be relevant to answering the question. 
+                    Only reply 'no' if you are certain the document is not relevant."""
+
         graded_docs = []
+        
         for doc in docs:
-            result = model.invoke(prompt.format(context=doc.page_content, question=question))
-            if 'yes' in result.content.lower():
-                graded_docs.append(doc)
+            try:
+                result = model.invoke(prompt.format(context=doc.page_content, question=question))
+                print(f"Model response for document: {result.content}")  # Debugging step
+
+                # If the model explicitly says 'no', exclude the document; otherwise, include it
+                if 'no' not in result.content.lower():
+                    graded_docs.append(doc)
+            except Exception as e:
+                print(f"Error grading document: {e}")
+        
+        # If no relevant documents are found, signal that a web search is needed
         return {"documents": graded_docs, "web_search_needed": "No" if graded_docs else "Yes"}
+
 
     def generate_answer(state: StateSchema):
         print("---GENERATE ANSWER---")
@@ -116,28 +130,33 @@ if uploaded_file is not None:
             print("No documents to generate an answer from.")
             return {"generation": "No relevant documents found to answer the question.", "documents": docs, "question": question}
 
-        # Continue with the usual generation process
+        # Prepare the document content for passing into the model
+        context = "\n\n".join([doc.page_content for doc in docs])
+        
         prompt = hub.pull("rlm/rag-prompt")
         
         llm = ChatOpenAI(model_name="gpt-3.5-turbo", temperature=0)
         rag_chain = prompt | llm | StrOutputParser()
 
-        # Call invoke method properly
-        try:
-            generation = rag_chain.invoke({"context": docs, "question": question})
+        # Debugging: Print the context and question before invoking the chain
+        print(f"Context for LLM:\n{context[:500]}")  # Print first 500 characters of the context for debugging
+        print(f"Question for LLM:\n{question}")
 
-            if isinstance(generation, dict) and "content" in generation:
-                return {"generation": generation["content"], "documents": docs, "question": question}
-            elif isinstance(generation, str):
-                return {"generation": generation, "documents": docs, "question": question}
-            else:
-                print("Unexpected generation format.")
-                return {"generation": None, "documents": docs, "question": question}
+        try:
+            # Call invoke method properly, ensuring correct input format
+            generation = rag_chain.invoke({"context": context, "question": question})
+
+            # Print the raw output from the LLM
+            print("Raw LLM Output:", generation)
+
+            # Return the raw generation directly without further processing
+            return {"generation": generation, "documents": docs, "question": question}
+            
         except Exception as e:
             print(f"Error during LLM invocation: {e}")
             return {"generation": None, "documents": docs, "question": question}
 
-    # Create the chatbot logic flow using StateGraph
+    # Define the chatbot logic flow using StateGraph
     agentic_rag = StateGraph(state_schema=StateSchema)
     agentic_rag.add_node("retrieve", retrieve)
     agentic_rag.add_node("grade_documents", grade_documents)
@@ -149,18 +168,21 @@ if uploaded_file is not None:
 
     # User query input
     user_query = st.text_input("Ask a question about the document:")
-    
+
     if st.button("Submit Query"):
         if user_query:
+            # Initial state setup with user query
             initial_state = {"question": user_query, "documents": [], "web_search_needed": "No"}
             
             # Debugging: Print initial state before invoking the graph
-            print("Initial State:", initial_state)
+            st.write("Initial State:", initial_state)
             
+            # Invoke the agentic graph with the initial state
             response = agentic_rag.invoke(initial_state)
             
-            # Check if 'generation' exists before accessing
-            if 'generation' in response and response['generation']:
-                st.write("Answer:", response["generation"])
+            # Debugging: Print raw LLM response
+            if 'generation' in response:
+                st.write("Raw LLM Output:", response['generation'])
             else:
                 st.write("No relevant answer generated or no documents retrieved.")
+
